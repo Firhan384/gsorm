@@ -433,34 +433,52 @@ func (b *Builder) InsertBulk(data []map[string]interface{}) error {
 
 	// Get columns from first data row
 	firstRow := data[0]
-	columns := make([]string, 0, len(firstRow))
+	numCols := len(firstRow)
+	columns := make([]string, 0, numCols)
 	for col := range firstRow {
 		columns = append(columns, col)
 	}
 
-	// Create placeholders for all rows
-	valuePlaceholders := make([]string, len(data))
-	allValues := make([]interface{}, 0, len(data)*len(columns))
-
+	// Pre-allocate with exact capacity
+	numRows := len(data)
+	allValues := make([]interface{}, 0, numRows*numCols)
+	
+	// Use string builder from pool
+	query := getStringBuilder()
+	defer putStringBuilder(query)
+	
+	// Build query efficiently
+	query.WriteString("INSERT INTO ")
+	query.WriteString(b.table)
+	query.WriteString(" (")
+	query.WriteString(strings.Join(columns, ", "))
+	query.WriteString(") VALUES ")
+	
+	// Build VALUES clause
 	for i, row := range data {
-		rowPlaceholders := make([]string, len(columns))
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString("(")
+		
+		// Add placeholders and values
 		for j, col := range columns {
-			rowPlaceholders[j] = "?"
+			if j > 0 {
+				query.WriteString(", ")
+			}
+			query.WriteString("?")
 			allValues = append(allValues, row[col])
 		}
-		valuePlaceholders[i] = "(" + strings.Join(rowPlaceholders, ", ") + ")"
+		query.WriteString(")")
 	}
 
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-		b.table,
-		strings.Join(columns, ", "),
-		strings.Join(valuePlaceholders, ", "))
+	queryStr := query.String()
 
 	if b.tx != nil {
-		_, err := b.tx.Exec(query, allValues...)
+		_, err := b.tx.Exec(queryStr, allValues...)
 		return err
 	}
-	_, err := b.db.Exec(query, allValues...)
+	_, err := b.db.Exec(queryStr, allValues...)
 	return err
 }
 
